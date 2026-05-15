@@ -62,7 +62,8 @@ def select_anchors(
     k = min(num_anchors, valid_indices.numel())
     if k > 0:
         perm = torch.randperm(valid_indices.numel(), device=loss_mask.device)
-        anchors[:k] = valid_indices[perm[:k]]
+        # using gather instead of slice indexing to bypass torch.compile Inductor bug
+        anchors[:k] = valid_indices.gather(0, perm[:k])
         anchor_valid[:k] = True
 
     return anchors, anchor_valid
