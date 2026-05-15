@@ -16,7 +16,7 @@ from speculators.models.eagle3.metrics import compute_metrics
 from speculators.models.eagle3.model_definitions import model_classes
 from speculators.models.utils import resolve_target_layer_ids
 from speculators.proposals.greedy import GreedyTokenProposalConfig
-
+from speculators.quantization import apply_quantization
 
 def conditional_torch_compile(func):
     if torch.cuda.is_available() and hasattr(torch, "compile"):
@@ -100,6 +100,10 @@ class Eagle3DraftModel(DraftVocabMixin, SpeculatorModel):
             self.input_norm = None
 
         self.post_init()
+
+        # Replace matching nn.Linear modules in-place with quantized variants
+        # if a quantization config is set on the speculator config.
+        apply_quantization(self, config.quantization)
 
     def load_verifier_weights(self):
         super().load_verifier_weights()
@@ -295,6 +299,7 @@ class Eagle3DraftModel(DraftVocabMixin, SpeculatorModel):
             norm_before_fc=kwargs.get("norm_before_fc", False),
             embed_requires_grad=kwargs.get("embed_requires_grad", False),
             eagle_aux_hidden_state_layer_ids=target_layer_ids,
+            quantization=kwargs.get("quantization"),
             speculators_config=SpeculatorsConfig(
                 algorithm="eagle3",
                 proposal_methods=[

@@ -5,6 +5,7 @@ from transformers import AutoConfig, PretrainedConfig
 from transformers.models.llama.configuration_llama import LlamaConfig
 
 from speculators import SpeculatorModelConfig
+from speculators.quantization import QuantizationConfig
 
 __all__ = [
     "Eagle3SpeculatorConfig",
@@ -67,6 +68,16 @@ class Eagle3SpeculatorConfig(SpeculatorModelConfig):
     embed_requires_grad: bool = Field(
         default=False,
         description="Whether embedding layer weights require gradients during training",
+    )
+
+    quantization: QuantizationConfig | None = Field(
+        default=None,
+        description=(
+            "Optional weight/activation quantization config. If set, matching "
+            "nn.Linear modules in the speculator are replaced with QuEST's "
+            "QuantizedLinear after construction. Default None preserves "
+            "existing checkpoints bit-for-bit."
+        ),
     )
 
     @field_serializer("transformer_layer_config")

@@ -1,6 +1,7 @@
 import logging
 import os
 import warnings
+from datetime import timedelta
 
 import torch
 import torch.distributed as dist
@@ -10,6 +11,9 @@ from transformers import AutoTokenizer
 local_rank = int(os.environ.get("LOCAL_RANK", "0"))
 world_size = int(os.environ.get("WORLD_SIZE", "1"))
 is_distributed = "LOCAL_RANK" in os.environ
+
+# NCCL watchdog timeout. Increased default 10 min for debugging
+NCCL_TIMEOUT_SEC = int(os.environ.get("SPECULATORS_NCCL_TIMEOUT_SEC", "3600"))
 
 logger = logging.getLogger("speculators")
 
@@ -32,7 +36,11 @@ def maybe_setup_distributed() -> tuple[int, int, int, bool]:
     if acc is None:
         raise ValueError("No accelerator found")
     backend = torch.distributed.get_default_backend_for_device(acc)
-    dist.init_process_group(backend, device_id=local_rank)
+    dist.init_process_group(
+        backend,
+        device_id=local_rank,
+        timeout=timedelta(seconds=NCCL_TIMEOUT_SEC),
+    )
 
     rank = dist.get_rank()
 

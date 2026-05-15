@@ -1,8 +1,10 @@
 import argparse
 import logging
 import random
+import re
 import warnings
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -29,6 +31,7 @@ from speculators.train.distributed_batch_sampler import (
 )
 from speculators.train.logger import setup_metric_logger, setup_root_logger
 from speculators.train.noise_transforms import AddUniformNoise
+from speculators.train.optimizers import available_optimizers
 from speculators.train.trainer import Trainer, TrainerConfig
 from speculators.train.utils import (
     maybe_destroy_distributed,
@@ -227,6 +230,51 @@ def parse_vocab_mappings(args: argparse.Namespace):
     return None, None, verifier_config.vocab_size
 
 
+def parse_quantization_arg(value: str) -> dict | None:
+    """
+    Parses a string like 'w4a4' or 'W8A8' into the exact dictionary 
+    structure expected by the Pydantic QuantizationConfig.
+    """
+    if not value or value.lower() == "none":
+        return None
+        
+    # Match patterns like w4a4, W8A8, w4a16 (case-insensitive)
+    match = re.match(r"(?i)w(\d+)a(\d+)", value)
+    if not match:
+        raise argparse.ArgumentTypeError(
+            f"Invalid quantization format: '{value}'. Expected format like 'w4a4'."
+        )
+        
+    w_bits = int(match.group(1))
+    a_bits = int(match.group(2))
+    
+    # Construct and return the dictionary expected by your Pydantic models
+    return {
+        "weight": {"quantizer_type": "hadamard_trust", "bits": w_bits, "trust": None},
+        "activation": {"quantizer_type": "hadamard_trust", "bits": a_bits, "trust": None},
+        "targets": [r"^layers\.\d+\.(self_attn|mlp)\..*_proj$"]
+    }
+
+
+def parse_optimizer_args(items: list[str] | None) -> dict[str, Any]:
+    """Parse repeated `--optimizer-arg key=value` flags into a typed dict.
+
+    Values are coerced in this order: int, float, bool ('true'/'false'), str.
+    Comma-separated values become tuples (e.g. 'betas=0.9,0.95').
+    """
+    out: dict[str, Any] = {}
+    if not items:
+        return out
+    for raw in items:
+        if "=" not in raw:
+            raise ValueError(
+                f"--optimizer-arg expects key=value, got '{raw}'"
+            )
+        key, value = raw.split("=", 1)
+        out[key.strip()] = _coerce(value.strip())
+    return out
+
+
 def main(args: argparse.Namespace):
     # Set random seed for reproducibility
     set_seed(args.seed, args.deterministic_cuda)
@@ -356,6 +404,9 @@ def main(args: argparse.Namespace):
     # Get trainer kwargs from model class
     train_call_kwargs, val_call_kwargs = model_class.get_trainer_kwargs(**vars(args))
 
+    optimizer_kwargs = parse_optimizer_args(args.optimizer_arg)
+    optimizer_kwargs.setdefault("weight_decay", args.weight_decay)
+
     trainer_config = TrainerConfig(
         num_epochs=args.epochs,
         save_path=args.save_path,
@@ -369,6 +420,8 @@ def main(args: argparse.Namespace):
         scheduler_warmup_steps=args.scheduler_warmup_steps,
         scheduler_total_steps=args.scheduler_total_steps,
         scheduler_num_cosine_cycles=args.scheduler_num_cosine_cycles,
+        optimizer_name=args.optimizer,
+        optimizer_kwargs=optimizer_kwargs,
         checkpoint_freq=args.checkpoint_freq,
         save_best=args.save_best,
         hidden_states_dtype=hidden_states_dtype,
@@ -497,6 +550,30 @@ def parse_args():
     parser.add_argument("--save-path", type=str, default="./output/checkpoints")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="adamw",
+        choices=available_optimizers(),
+        help="Optimizer to use. See speculators/train/optimizers.py for the registry.",
+    )
+    parser.add_argument(
+        "--optimizer-arg",
+        action="append",
+        default=None,
+        metavar="KEY=VALUE",
+        help=(
+            "Optimizer-specific argument as key=value. May be repeated. "
+            "Comma-separated values become tuples (e.g. 'betas=0.9,0.95'). "
+            "Type is inferred (int, float, bool, str, None)."
+        ),
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=0.0,
+        help="Weight decay (passed to optimizer if it accepts it).",
+    )
     parser.add_argument("--no-resume-from-checkpoint", action="store_true")
     parser.add_argument(
         "--logger",
@@ -646,6 +723,12 @@ def parse_args():
         action="store_true",
         default=False,
         help="Pointing to checkpoint with lowest validation loss.",
+    )
+    parser.add_argument(
+        "--quantization", 
+        type=parse_quantization_arg, 
+        default=None,
+        help="Quantization format, e.g., 'w4a4' for 4-bit weights and 4-bit activations."
     )
 
     # lr scheduler

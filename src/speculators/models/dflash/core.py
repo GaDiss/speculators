@@ -19,6 +19,7 @@ from speculators.models.dflash.utils import (
     select_anchors,
 )
 from speculators.models.utils import resolve_target_layer_ids
+from speculators.quantization import apply_quantization
 
 
 @SpeculatorModel.register("dflash")
@@ -91,6 +92,10 @@ class DFlashDraftModel(DraftVocabMixin, SpeculatorModel):
         self.verifier_norm.weight.requires_grad = False
         self.block_size = config.block_size
         self.post_init()
+        
+        # Replace matching nn.Linear modules in-place with quantized variants
+        # if a quantization config is set on the speculator config.
+        apply_quantization(self, config.quantization)
 
     @classmethod
     def from_training_args(
@@ -143,6 +148,7 @@ class DFlashDraftModel(DraftVocabMixin, SpeculatorModel):
             max_anchors=kwargs.get("max_anchors", 3072),
             aux_hidden_state_layer_ids=target_layer_ids,
             mask_token_id=kwargs.get("mask_token_id"),
+            quantization=kwargs.get("quantization"),
             speculators_config=SpeculatorsConfig(
                 algorithm="dflash",
                 proposal_methods=[

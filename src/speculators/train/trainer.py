@@ -23,6 +23,7 @@ from speculators.train.checkpointer import (
     SingleGPUCheckpointer,
 )
 from speculators.train.graceful_shutdown import with_graceful_shutdown
+from speculators.train.optimizers import build_optimizer
 from speculators.train.utils import apply_fully_sharded
 
 root_logger = logging.getLogger("speculators")
@@ -49,6 +50,8 @@ class TrainerConfig(NamedTuple):
     save_best: bool = False
     hidden_states_dtype: torch.dtype = torch.bfloat16
     log_freq: int = 1
+    optimizer_name: str = "adamw"
+    optimizer_kwargs: dict = {}
 
 
 class Trainer:
@@ -144,6 +147,12 @@ class Trainer:
 
     def setup_optimizer(self):
         # Setup optimizer
+        # self.opt = build_optimizer(
+        #     self.config.optimizer_name,
+        #     self.model.parameters(),
+        #     lr=self.config.lr,
+        #     **self.config.optimizer_kwargs,
+        # )
         self.opt = torch.optim.AdamW(self.model.named_parameters(), lr=self.config.lr)
         last_epoch = -1
         if self.resume_from_checkpoint and self.checkpointer.previous_epoch != -1:

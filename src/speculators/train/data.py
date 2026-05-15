@@ -270,17 +270,21 @@ class ArrowDataset(BaseDataset):
             warnings.warn(str(e), stacklevel=1)
             return None
 
-        loaded_hs = load_file(hs_filepath)
+        try:
+            loaded_hs = load_file(hs_filepath)
 
-        match self.on_generate:
-            case "cache":
-                file_idx = self._map_to_file_idx(index)
-                target_path = self.hidden_states_path / f"hs_{file_idx}.safetensors"
-                shutil.move(hs_filepath, target_path)
-            case "delete":
-                Path(hs_filepath).unlink()
+            match self.on_generate:
+                case "cache":
+                    file_idx = self._map_to_file_idx(index)
+                    target_path = self.hidden_states_path / f"hs_{file_idx}.safetensors"
+                    shutil.move(hs_filepath, target_path)
+                case "delete":
+                    Path(hs_filepath).unlink()
 
-        return loaded_hs
+            return loaded_hs
+        except Exception:
+            Path(hs_filepath).unlink(missing_ok=True)
+            raise
 
     def _get_raw_data(self, index):
         loaded_hs = self._maybe_load_hs_file(index)

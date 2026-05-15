@@ -7,6 +7,8 @@ from transformers.models.qwen3.modeling_qwen3 import (
 )
 
 from speculators import SpeculatorModelConfig
+from speculators.quantization import QuantizationConfig
+
 
 __all__ = [
     "DFlashSpeculatorConfig",
@@ -69,6 +71,16 @@ class DFlashSpeculatorConfig(SpeculatorModelConfig):
     mask_token_id: int | None = Field(
         default=None,
         description="Token ID used for masking",
+    )
+
+    quantization: QuantizationConfig | None = Field(
+        default=None,
+        description=(
+            "Optional weight/activation quantization config. If set, matching "
+            "nn.Linear modules in the speculator are replaced with QuEST's "
+            "QuantizedLinear after construction. Default None preserves "
+            "existing checkpoints bit-for-bit."
+        ),
     )
 
     @field_serializer("transformer_layer_config")

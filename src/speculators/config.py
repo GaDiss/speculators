@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from transformers import PretrainedConfig
 
 from speculators.proposals import TokenProposalConfig
+from speculators.quantization import QuantizationConfig, QuantizerConfig
 from speculators.utils import PydanticClassRegistryMixin, ReloadableBaseModel
 
 __all__ = [
@@ -343,5 +344,7 @@ def reload_schemas():
     with the current registry state.
     """
     TokenProposalConfig.reload_schema()
+    QuantizerConfig.reload_schema()
+    QuantizationConfig.reload_schema()
     SpeculatorsConfig.reload_schema()
     SpeculatorModelConfig.reload_schema()

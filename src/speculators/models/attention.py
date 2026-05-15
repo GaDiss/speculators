@@ -10,6 +10,7 @@ import torch
 from torch.nn.attention.flex_attention import BlockMask, flex_attention
 from transformers.modeling_utils import AttentionInterface
 
+# flex_attention = torch.compile(flex_attention, dynamic=False)
 
 def flex_attention_forward(
     module: torch.nn.Module,  # noqa: ARG001
