@@ -88,22 +88,24 @@ class TrustQuantizer(STEQuantizer):
 
 
 class HadamardTrustQuantizer(TrustQuantizer):
-    aux_matrix = (
-        torch.from_numpy(hadamard(128)).to(dtype=torch.bfloat16, device="cuda")
-        * 2 ** (-7 / 2)
+    size = 128
+    aux_matrix = torch.tensor(
+        hadamard(size) * size**-0.5,
+        dtype=torch.bfloat16,
+        device="cuda",
+        requires_grad=False,
     )
 
     def __init__(self, bits=4, trust=None):
         super().__init__(bits, True, trust)
-        self.matrix = None
+
+    def _rotate(self, x, matrix):
+        return (x.reshape(-1, self.size) @ matrix).reshape_as(x)
 
     def forward(self, x):
-        if self.matrix is None:
-            self.matrix = torch.block_diag(
-                *[self.aux_matrix.to(x.device).to(x.dtype)] * (x.shape[-1] // 128),
-            )
+        matrix = self.aux_matrix.to(device=x.device, dtype=x.dtype)
 
-        x_had = x @ self.matrix
+        x_had = self._rotate(x, matrix)
         with torch.no_grad():
             std = torch.sqrt(torch.mean(x_had**2, dim=-1, keepdim=True))
             scale = OPTIMAL_GAUSSIAN_SCALES[self.bits] * std + 1e-8
@@ -117,9 +119,9 @@ class HadamardTrustQuantizer(TrustQuantizer):
                 x_clip = torch.clamp(x_had, neg_scale, scale)
                 xq = torch.round(x_clip / step) * step
             mask = (torch.abs(xq - x_had) <= std * self.trust).to(x_had.dtype)
-            xq = xq @ self.matrix.T
+            xq = self._rotate(xq, matrix.T)
 
-        grad_flow_output = (x_had * mask) @ self.matrix.T
+        grad_flow_output = self._rotate(x_had * mask, matrix.T)
         return grad_flow_output + (xq - grad_flow_output).detach()
 
 
