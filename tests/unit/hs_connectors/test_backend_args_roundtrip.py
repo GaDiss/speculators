@@ -56,6 +56,28 @@ def test_fp8_backend_defaults_backfilled():
     assert flat["hidden_states_path"] is None  # FP8Backend default (shared with file)
 
 
+def test_int4_backend_defaults_backfilled():
+    cfg = TrainConfig.from_sources(
+        cli={"verifier_name_or_path": "m", "hidden_states_backend": "int4"},
+        argv=["train.py"],
+    )
+    assert cfg.flatten()["hidden_states_path"] is None
+
+
+def test_resolve_int4_backend_hidden_states_path():
+    cfg = TrainConfig.resolve(
+        [
+            "--verifier-name-or-path",
+            "m",
+            "--hidden-states-backend",
+            "int4",
+            "--hidden-states-path",
+            "/data/hs-int4",
+        ]
+    )
+    assert cfg.flatten()["hidden_states_path"] == "/data/hs-int4"
+
+
 def test_resolve_fp8_backend_hidden_states_path():
     cfg = TrainConfig.resolve(
         [

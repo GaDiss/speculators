@@ -696,6 +696,30 @@ Only relevant for offline mode.
 # For 1K samples: ~260 GB
 ```
 
+### Compressed Hidden-State Caches
+
+The `fp8` and `int4` hidden-state backends cut the cache to about 1/2 and 1/4 of the bf16 size. Pass the same backend to the vLLM launcher (Step 2), and to training (Step 4); `generate-offline-data` (Step 3) is unchanged:
+
+```bash
+python scripts/launch_vllm.py Qwen/Qwen3-8B --target-layer-ids 2 18 33 \
+  --hidden-states-backend int4 --hidden-states-path ./output/hidden_states
+
+speculators train ... --hidden-states-backend int4 --hidden-states-path ./output/hidden_states
+```
+
+`int4` packs each group of 128 channels with its own fp16 scale; `fp8` uses `float8_e4m3fn` with one scale per token. Files written by either backend are unpacked to bf16 as they are loaded, so nothing else in training changes.
+
+To evaluate a storage format on an existing bf16 cache, fake-quantize it at load time instead (training split only; validation always reads the cache as stored):
+
+```bash
+speculators train ... \
+  --cache-qdq-aux int4 \          # fc inputs: fp8 | int8 | int4 | int3 | int2
+  --cache-qdq-teacher fp8 \       # distillation target
+  --cache-qdq-transform-variant hadamard   # optional blockwise rotation before quantizing
+```
+
+`scripts/fit_cache_transform.py` fits the calibrated transform variants (`wush025`, `whiten05`) on a sample of the cache, for use via `--cache-qdq-transform-path`. See `examples/train/dflash_qwen3_8b_offline_int4_cache.sh` for the full pipeline.
+
 ## Common Issues & Solutions
 
 ### Issue: Out of Memory (Training)

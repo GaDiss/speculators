@@ -26,7 +26,9 @@ from speculators.models.utils import (
     get_verifier_config,
     resolve_draft_intermediate_size,
 )
+from speculators.train.cache_qdq import CacheQDQ
 from speculators.train.config import TrainConfig
+from speculators.train.config.schema import CacheCompressionArgs
 from speculators.train.dataloader import create_train_val_loaders
 from speculators.train.distributed import (
     get_rank,
@@ -39,6 +41,7 @@ from speculators.train.logger import (
     setup_metric_logger,
     setup_root_logger,
 )
+from speculators.train.qdq import bytes_per_token_channel
 from speculators.train.trainer import Trainer, TrainerConfig
 from speculators.train.utils import resolve_mask_token_id
 from speculators.train.vocab_mapping import (
@@ -624,6 +627,45 @@ def build_draft_model(
     )
 
 
+def _build_cache_qdq(cc: CacheCompressionArgs, hidden_size: int) -> CacheQDQ | None:
+    """Return the train-split QDQ hook, or ``None`` when no scheme is set."""
+    aux = None if cc.cache_qdq_aux == "none" else cc.cache_qdq_aux
+    teacher = None if cc.cache_qdq_teacher == "none" else cc.cache_qdq_teacher
+    if aux is None and teacher is None:
+        return None
+    return CacheQDQ(
+        hidden_size=hidden_size,
+        aux_scheme=aux,
+        teacher_scheme=teacher,
+        group=cc.cache_qdq_group,
+        transform_variant=cc.cache_qdq_transform_variant,
+        transform_path=cc.cache_qdq_transform_path,
+    )
+
+
+def _log_cache_bytes(cache_qdq: CacheQDQ, train_dataset, num_target_layers: int):
+    """Log what the simulated cache would occupy on disk vs. the bf16 baseline."""
+    h, g = cache_qdq.hidden_size, cache_qdq.group
+    bytes_per_token = (
+        num_target_layers * bytes_per_token_channel(cache_qdq.aux_scheme, h, g)
+        + bytes_per_token_channel(cache_qdq.teacher_scheme, h, g)
+        + 8  # int64 token id
+    )
+    baseline = (num_target_layers + 1) * 2 * h + 8
+    tokens = int(sum(train_dataset.approx_lengths))
+    logger.info(
+        "cache-bytes: aux=%s teacher=%s stored=%.1fGiB baseline=%.1fGiB "
+        "fraction=%.4f bytes/token=%d tokens=%d",
+        cache_qdq.aux_scheme or "bf16",
+        cache_qdq.teacher_scheme or "bf16",
+        tokens * bytes_per_token / 2**30,
+        tokens * baseline / 2**30,
+        bytes_per_token / baseline,
+        bytes_per_token,
+        tokens,
+    )
+
+
 def main(cfg: TrainConfig):  # noqa: C901
     """Build the configured model, data loaders, and trainer, then run training."""
     # Phase-1 adapter: the model layer still consumes a flat vars(args)-shaped
@@ -732,6 +774,7 @@ def main(cfg: TrainConfig):  # noqa: C901
         "mtp": shift_batch_mtp,
     }
     preprocess = preprocess_fns.get(args.speculator_type)
+    cache_qdq = _build_cache_qdq(cfg.cache_compression, hidden_size)
 
     backend_registry = HiddenStatesBackend.registry
     backend_cls = backend_registry[args.hidden_states_backend]
@@ -761,9 +804,12 @@ def main(cfg: TrainConfig):  # noqa: C901
         prefetch_factor=args.prefetch_factor,
         max_transfer_workers=args.max_transfer_workers,
         preprocess=preprocess,
+        train_preprocess=cache_qdq,
         train_data_ratio=args.train_data_ratio,
         seed=args.seed,
     )
+    if cache_qdq is not None and get_rank() == 0:
+        _log_cache_bytes(cache_qdq, train_loader.dataset, num_target_layers)
 
     # Get trainer kwargs from model class
     train_call_kwargs, val_call_kwargs = model_class.get_trainer_kwargs(**vars(args))

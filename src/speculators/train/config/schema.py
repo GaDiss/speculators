@@ -472,6 +472,38 @@ class LoggingArgs(_Group):
     )
 
 
+class CacheCompressionArgs(_Group):
+    """Load-time fake quantization of cached hidden states (training split only)."""
+
+    cache_qdq_aux: Literal["none", "fp8", "int8", "int4", "int3", "int2"] = Field(
+        default="none",
+        description="Quantize-dequantize the auxiliary hidden states (the fc input) "
+        "at load time to simulate a compressed cache. Validation always reads the "
+        "cache as stored.",
+    )
+    cache_qdq_teacher: Literal["none", "fp8", "int8", "int4", "int3", "int2"] = Field(
+        default="none",
+        description="Quantize-dequantize the verifier's final hidden state (the "
+        "distillation target) at load time.",
+    )
+    cache_qdq_group: int = Field(
+        default=128,
+        gt=0,
+        description="Group size for group-wise integer QDQ and for the blockwise "
+        "transform. Must divide the verifier hidden size.",
+    )
+    cache_qdq_transform_variant: str | None = Field(
+        default=None,
+        description="Blockwise transform applied before QDQ and inverted after: "
+        "'hadamard' (data-free) or a calibrated variant from "
+        "--cache-qdq-transform-path (e.g. 'wush025', 'whiten05').",
+    )
+    cache_qdq_transform_path: str | None = Field(
+        default=None,
+        description="Path to the transform bundle. Required for calibrated variants.",
+    )
+
+
 class DFlashArgs(_Group):
     """Shared DFlash-family backbone knobs."""
 
@@ -647,6 +679,7 @@ _GROUPS: dict[str, type[_Group]] = {
     "draft": DraftArgs,
     "data": DataArgs,
     "generation": GenerationArgs,
+    "cache_compression": CacheCompressionArgs,
     "loss": LossArgs,
     "optimizer": OptimizerArgs,
     "scheduler": SchedulerArgs,
@@ -772,6 +805,9 @@ class TrainConfig(BaseSettings):
     draft: DraftArgs = Field(default_factory=DraftArgs)
     data: DataArgs = Field(default_factory=DataArgs)
     generation: GenerationArgs = Field(default_factory=GenerationArgs)
+    cache_compression: CacheCompressionArgs = Field(
+        default_factory=CacheCompressionArgs
+    )
     loss: LossArgs = Field(default_factory=LossArgs)
     optimizer: OptimizerArgs = Field(default_factory=OptimizerArgs)
     scheduler: SchedulerArgs = Field(default_factory=SchedulerArgs)

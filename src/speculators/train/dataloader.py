@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 import os
+from functools import partial
 
 import torch
 from torch.utils.data import DataLoader
@@ -61,6 +62,10 @@ def identity_fn(x):
     return x
 
 
+def _chain(sample: BatchType, first, second) -> BatchType:
+    return second(first(sample))
+
+
 def _setup_dataloader(
     dataset: SpeculatorsDataset,
     total_seq_len: int,
@@ -109,6 +114,7 @@ def create_train_val_loaders(
     num_workers: int,
     prefetch_factor: int,
     preprocess: Callable[[BatchType], BatchType] | None,
+    train_preprocess: Callable[[BatchType], BatchType] | None = None,
     train_data_ratio: float = 0.9,
     max_train_batches: int | None = None,
     seed: int = 0,
@@ -123,6 +129,9 @@ def create_train_val_loaders(
     ``seed`` sets the training packing order and must be the same on every
     rank. Validation keeps a fixed order, so runs with different seeds are
     validated on the same packed batches.
+
+    ``train_preprocess`` runs on training samples only, before ``preprocess``
+    (e.g. cache QDQ); validation always sees the cache as stored.
     """
     _limit_worker_threads()
 
@@ -163,6 +172,13 @@ def create_train_val_loaders(
             on_missing=on_missing,
         )
 
+    if train_preprocess is None:
+        train_fn = preprocess
+    elif preprocess is None:
+        train_fn = train_preprocess
+    else:
+        train_fn = partial(_chain, first=train_preprocess, second=preprocess)
+
     train_dataset = SpeculatorsDataset(
         records=train_records,
         max_len=total_seq_len,
@@ -170,7 +186,7 @@ def create_train_val_loaders(
         hidden_size=hidden_size,
         hidden_states_dtype=hidden_states_dtype,
         num_target_layers=num_target_layers,
-        preprocess=preprocess,
+        preprocess=train_fn,
     )
     val_dataset = SpeculatorsDataset(
         records=val_records,

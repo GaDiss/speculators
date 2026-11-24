@@ -26,7 +26,7 @@ The first speedup number from a new implementation belongs here as a smoke test.
 
 ## What we have learned
 
-No entries yet.
+- [Compressed hidden-state caches: int4 backend and load-time QDQ for DFlash](cache-compression-int4-qdq-gadiss.md) — int4 storage (4x smaller) and load-time fake-quant agree with each other on a 200-sample smoke test; draft quality under compression is not yet measured.
 
 ## Keep "runs", "correct" and "fast" apart
 

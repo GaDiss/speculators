@@ -15,6 +15,7 @@ import torch
 from safetensors.torch import load_file
 
 from hs_connectors.fp8_utils import SCALES_KEY, dequantize_fp8_tensor
+from hs_connectors.int4_utils import INT4_SCALES_KEY, int4_unpack
 from hs_connectors.mooncake_store import MooncakeHiddenStatesStore, MooncakeStoreConfig
 
 if TYPE_CHECKING:
@@ -306,6 +307,85 @@ class FP8Backend(HiddenStatesBackend):
             "kv_connector": "FP8HiddenStatesConnector",
             "kv_role": "kv_producer",
             "kv_connector_module_path": "hs_connectors.fp8_hidden_states_connector",
+            "kv_connector_extra_config": {
+                "shared_storage_path": args.hidden_states_path,
+            },
+        }
+
+
+# ---------------------------------------------------------------------------
+# Int4 backend (shared filesystem, group-wise int4 packed hidden states)
+# ---------------------------------------------------------------------------
+
+
+class Int4Transfer(FileTransfer):
+    """File-system transfer that transparently unpacks int4 payloads.
+
+    Pairs with ``Int4HiddenStatesConnector`` on the vLLM side. Plain bf16 files
+    (no scales tensor) pass through unchanged, so a directory may mix both.
+    """
+
+    def __init__(
+        self,
+        hidden_states_path: Path,
+        dequantize_dtype: torch.dtype = torch.bfloat16,
+    ):
+        super().__init__(hidden_states_path)
+        self.dequantize_dtype = dequantize_dtype
+
+    def _unpack(
+        self, sample: dict[str, torch.Tensor] | None
+    ) -> dict[str, torch.Tensor] | None:
+        if sample is None or INT4_SCALES_KEY not in sample:
+            return sample
+        unpacked = dict(sample)
+        unpacked["hidden_states"] = int4_unpack(
+            sample["hidden_states"],
+            sample[INT4_SCALES_KEY],
+            dtype=self.dequantize_dtype,
+        )
+        del unpacked[INT4_SCALES_KEY]
+        return unpacked
+
+    def get_cached(self, file_idx: int) -> dict[str, torch.Tensor] | None:
+        return self._unpack(super().get_cached(file_idx))
+
+    def get_generated(
+        self, hs_transfer_params: dict[str, Any]
+    ) -> dict[str, torch.Tensor] | None:
+        return self._unpack(super().get_generated(hs_transfer_params))
+
+
+@HiddenStatesBackend.register("int4")
+class Int4Backend(HiddenStatesBackend):
+    """Shared-filesystem backend that packs hidden states to group-wise int4."""
+
+    @staticmethod
+    def add_train_args(parser: argparse.ArgumentParser) -> None:
+        FileBackend.add_train_args(parser)
+
+    @staticmethod
+    def add_launch_args(parser: argparse.ArgumentParser) -> None:
+        FileBackend.add_launch_args(parser)
+
+    @staticmethod
+    def from_train_args(
+        args: argparse.Namespace,
+        data_path: str,
+    ) -> Int4Transfer:
+        hs_path = (
+            Path(args.hidden_states_path)
+            if args.hidden_states_path
+            else Path(data_path) / "hidden_states"
+        )
+        return Int4Transfer(hs_path)
+
+    @staticmethod
+    def build_kv_transfer_config(args: argparse.Namespace) -> dict[str, Any]:
+        return {
+            "kv_connector": "Int4HiddenStatesConnector",
+            "kv_role": "kv_producer",
+            "kv_connector_module_path": "hs_connectors.int4_hidden_states_connector",
             "kv_connector_extra_config": {
                 "shared_storage_path": args.hidden_states_path,
             },

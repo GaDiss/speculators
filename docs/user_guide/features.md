@@ -34,6 +34,10 @@ Training automatically resumes from the latest checkpoint, restoring model weigh
 
 The `hs_connectors` package provides a pluggable backend system for transferring hidden states between vLLM and the trainer. The default **filesystem** backend uses safetensors files on a shared filesystem for single-node setups. For multi-node training — where the target model spans multiple nodes or extraction and training run on separate machines — the **Mooncake** backend streams hidden states over TCP or RDMA through a distributed key-value store, with no shared filesystem required. See [Multi-Node Training](tutorials/multi_node_training.md) for setup details.
 
+## Compressed Hidden-State Caches
+
+Offline caches can be stored quantized: the `fp8` and `int4` hidden-state backends write 2x and 4x smaller files and unpack them transparently when training. To test a storage format without regenerating the cache, `--cache-qdq-aux` / `--cache-qdq-teacher` fake-quantize a bf16 cache at load time (training split only), optionally after a blockwise Hadamard or calibrated WUSH-style transform (`--cache-qdq-transform-variant`). See [Compressed Caches](tutorials/train.md#compressed-hidden-state-caches).
+
 ## Seamless Integration with vLLM
 
 Trained models are saved in a special speculators format that vLLM can load directly. Point vLLM at a checkpoint or a HuggingFace model and it automatically detects the speculator, pairs it with the target model, and enables speculative decoding — no extra configuration needed.
